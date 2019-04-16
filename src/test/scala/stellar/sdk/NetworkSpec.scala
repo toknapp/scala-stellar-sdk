@@ -444,6 +444,27 @@ class NetworkSpec(implicit ee: ExecutionEnv) extends Specification with Arbitrar
       network.paymentsByTransaction(hash) must containTheSameElementsAs(ops).await
     }.setGen(genHash)
 
+    "fetch a set of payment paths" >> prop { (from: PublicKey, to: PublicKey, amount: Amount) =>
+      val network = new MockNetwork
+      val response = mock[Seq[PaymentPath]]
+      val expected = Future(response)
+      val assetMap = amount.asset match {
+        case NativeAsset => Map(s"destination_asset_type" -> "native")
+        case nna: NonNativeAsset => Map(
+          s"destination_asset_type" -> nna.typeString,
+          s"destination_asset_code" -> nna.code,
+          s"destination_asset_issuer" -> nna.issuer.accountId
+        )
+      }
+      val expectedParams = assetMap ++ Map(
+        "destination_account" -> to.accountId,
+        "destination_amount" -> amount.units.toString,
+        "source_account" -> from.accountId
+      )
+      network.horizon.get[Seq[PaymentPath]]("/paths", expectedParams) returns expected
+      network.paymentPath(from, to, amount) mustEqual expected
+    }
+
     "fetch a stream of trades" >> {
       val network = new MockNetwork
       val response = mock[Stream[Trade]]

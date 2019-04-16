@@ -53,76 +53,49 @@ object Operation {
 }
 
 object OperationDeserializer extends ResponseParser[Operation]({ o: JObject =>
+  import AmountDeserializerMethods._
   implicit val formats = DefaultFormats
 
   def account(accountKey: String = "account") = KeyPair.fromAccountId((o \ accountKey).extract[String])
 
   def sourceAccount: Option[PublicKey] = Some(account("source_account"))
 
-  def asset(prefix: String = "", obj: JValue = o) = {
-    def assetCode = (obj \ s"${prefix}asset_code").extract[String]
 
-    def assetIssuer = KeyPair.fromAccountId((obj \ s"${prefix}asset_issuer").extract[String])
-
-    (obj \ s"${prefix}asset_type").extract[String] match {
-      case "native" => NativeAsset
-      case "credit_alphanum4" => IssuedAsset4(assetCode, assetIssuer)
-      case "credit_alphanum12" => IssuedAsset12(assetCode, assetIssuer)
-      case t => throw new RuntimeException(s"Unrecognised asset type '$t'")
-    }
-  }
-
-  def nonNativeAsset = asset().asInstanceOf[NonNativeAsset]
+  def nonNativeAsset = asset(o).asInstanceOf[NonNativeAsset]
 
   def price(label: String = "price_r"): Price = Price(
     n = (o \ label \ "n").extract[Int],
     d = (o \ label \ "d").extract[Int]
   )
 
-  def doubleFromString(key: String) = (o \ key).extract[String].toDouble
-
-  def nativeAmount(key: String) = {
-    NativeAmount(Amount.toBaseUnits(doubleFromString(key)).get)
-  }
-
-  def issuedAmount(label: String) = amount(label).asInstanceOf[IssuedAmount]
-
-  def amount(label: String = "amount", assetPrefix: String = "") = {
-    val units = Amount.toBaseUnits(doubleFromString(label)).get
-    asset(assetPrefix) match {
-      case nna: NonNativeAsset => IssuedAmount(units, nna)
-      case NativeAsset => NativeAmount(units)
-    }
-  }
-
   (o \ "type").extract[String] match {
-    case "create_account" => CreateAccountOperation(account(), nativeAmount("starting_balance"), sourceAccount)
-    case "payment" => PaymentOperation(account("to"), amount(), sourceAccount)
+    case "create_account" => CreateAccountOperation(account(), nativeAmount(o, "starting_balance"), sourceAccount)
+    case "payment" => PaymentOperation(account("to"), amount(o), sourceAccount)
     case "path_payment" =>
       val JArray(pathJs) = o \ "path"
-      val path: List[Asset] = pathJs.map(a => asset(obj = a))
-      PathPaymentOperation(amount("source_max", "source_"), account("to"), amount(), path, sourceAccount)
+      val path: List[Asset] = pathJs.map(a => asset(o = a))
+      PathPaymentOperation(amount(o, "source_max", "source_"), account("to"), amount(o), path, sourceAccount)
     case "manage_offer" =>
       (o \ "offer_id").extract[Long] match {
         case 0L => CreateOfferOperation(
-          selling = amount(assetPrefix = "selling_"),
-          buying = asset("buying_"),
+          selling = amount(o, assetPrefix = "selling_"),
+          buying = asset(o, "buying_"),
           price = price(),
           sourceAccount = sourceAccount
         )
         case id =>
           val amnt = (o \ "amount").extract[String].toDouble
           if (amnt == 0.0) {
-            DeleteOfferOperation(id, asset("selling_"), asset("buying_"), price(), sourceAccount)
+            DeleteOfferOperation(id, asset(o, "selling_"), asset(o, "buying_"), price(), sourceAccount)
           } else {
-            UpdateOfferOperation(id, selling = amount(assetPrefix = "selling_"), buying = asset("buying_"),
+            UpdateOfferOperation(id, selling = amount(o, assetPrefix = "selling_"), buying = asset(o, "buying_"),
               price = price(), sourceAccount)
           }
       }
     case "create_passive_offer" =>
       CreatePassiveOfferOperation(
-        selling = amount(assetPrefix = "selling_"),
-        buying = asset("buying_"),
+        selling = amount(o, assetPrefix = "selling_"),
+        buying = asset(o, "buying_"),
         price = price(),
         sourceAccount = sourceAccount
       )
@@ -143,7 +116,7 @@ object OperationDeserializer extends ResponseParser[Operation]({ o: JObject =>
         sourceAccount = sourceAccount
       )
     case "change_trust" =>
-      ChangeTrustOperation(issuedAmount("limit"), sourceAccount)
+      ChangeTrustOperation(issuedAmount(o, "limit"), sourceAccount)
     case "allow_trust" =>
       val asset: NonNativeAsset = nonNativeAsset
       AllowTrustOperation(account("trustor"), asset.code, (o \ "authorize").extract[Boolean], sourceAccount)

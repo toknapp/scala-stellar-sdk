@@ -4,6 +4,8 @@ import java.math.{MathContext, RoundingMode}
 import java.util.Locale
 
 import cats.data.State
+import org.json4s.{Formats, JValue}
+import stellar.sdk.KeyPair
 import stellar.sdk.model.xdr.{Decode, Encodable, Encode}
 
 import scala.util.Try
@@ -61,4 +63,36 @@ object Amount {
 
 object IssuedAmount {
   def decode: State[Seq[Byte], IssuedAmount] = Amount.decode.map(x => x.asInstanceOf[IssuedAmount])
+}
+
+object AmountDeserializerMethods {
+  def doubleFromString(o: JValue, key: String)(implicit f: Formats) = (o \ key).extract[String].toDouble
+
+  def nativeAmount(o: JValue, key: String)(implicit f: Formats)= {
+    NativeAmount(Amount.toBaseUnits(doubleFromString(o, key)).get)
+  }
+
+  def issuedAmount(o: JValue, label: String)(implicit f: Formats) = amount(o, label).asInstanceOf[IssuedAmount]
+
+  def amount(o: JValue, label: String = "amount", assetPrefix: String = "")(implicit f: Formats) = {
+    val units = Amount.toBaseUnits(doubleFromString(o, label)).get
+    asset(o, assetPrefix) match {
+      case nna: NonNativeAsset => IssuedAmount(units, nna)
+      case NativeAsset => NativeAmount(units)
+    }
+  }
+
+  def asset(o: JValue, prefix: String = "")(implicit f: Formats) = {
+    def assetCode = (o \ s"${prefix}asset_code").extract[String]
+
+    def assetIssuer = KeyPair.fromAccountId((o \ s"${prefix}asset_issuer").extract[String])
+
+    (o \ s"${prefix}asset_type").extract[String] match {
+      case "native" => NativeAsset
+      case "credit_alphanum4" => IssuedAsset4(assetCode, assetIssuer)
+      case "credit_alphanum12" => IssuedAsset12(assetCode, assetIssuer)
+      case t => throw new RuntimeException(s"Unrecognised asset type '$t'")
+    }
+  }
+
 }

@@ -1,5 +1,7 @@
 package stellar.sdk.model
 
+import org.json4s.DefaultFormats
+import org.json4s.native.JsonMethods
 import org.specs2.mutable.Specification
 import stellar.sdk.{ArbitraryInput, KeyPair}
 
@@ -65,6 +67,21 @@ class AssetSpec extends Specification with ArbitraryInput {
       val (remaining, actual) = Asset.decode.run(expected.encode).value
       actual mustEqual expected
       remaining must beEmpty
+    }
+  }
+
+  "deserialising an asset from json" should {
+    "fail if the asset type is unrecognised" >> {
+      implicit val formats = DefaultFormats
+
+      val js = JsonMethods.parse(
+        """{
+          |  "asset_code": "1",
+          |  "asset_issuer": "GDSBCQO34HWPGUGQSP3QBFEXVTSR2PW46UIGTHVWGWJGQKH3AFNHXHXN",
+          |  "asset_type": "credit_alphanum9"
+          |}
+        """.stripMargin)
+      AmountDeserializerMethods.asset(js) must throwA[RuntimeException]
     }
   }
 }

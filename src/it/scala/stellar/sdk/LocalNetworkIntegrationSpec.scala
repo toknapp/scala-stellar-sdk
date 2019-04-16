@@ -10,7 +10,7 @@ import org.specs2.concurrent.ExecutionEnv
 import org.specs2.mutable.Specification
 import stellar.sdk.inet.HorizonEntityNotFound
 import stellar.sdk.model.Amount.lumens
-import stellar.sdk.model._
+import stellar.sdk.model.{op, _}
 import stellar.sdk.model.op._
 import stellar.sdk.model.response._
 import stellar.sdk.model.result.TransactionHistory
@@ -33,8 +33,15 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
   val accnA = KeyPair.fromPassphrase("account a")
   val accnB = KeyPair.fromPassphrase("account b")
   val accnC = KeyPair.fromPassphrase("account c")
+  val accnX = KeyPair.fromPassphrase("account x")
+  val accnY = KeyPair.fromPassphrase("account y")
+  val accnZ = KeyPair.fromPassphrase("account z")
 
-  val accounts = Set(accnA, accnB, accnC)
+  val accounts = Set(accnA, accnB, accnC, accnX, accnY, accnZ)
+
+  val avocado = Asset("Avocado", accnB)
+  val banana = Asset("Banana", accnB)
+  val coffee = Asset("Coffee", accnB)
 
   val day0Assets = network.assets()
   val day0Effects = network.effects()
@@ -73,6 +80,9 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
           CreateAccountOperation(accnA, lumens(1000)),
           CreateAccountOperation(accnB, lumens(1000)),
           CreateAccountOperation(accnC, lumens(1000)),
+          CreateAccountOperation(accnX, lumens(1000)),
+          CreateAccountOperation(accnY, lumens(1000)),
+          CreateAccountOperation(accnZ, lumens(1000)),
           WriteDataOperation("life_universe_everything", "42", Some(accnB)),
           WriteDataOperation("fenton", "FENTON!", Some(accnC)),
           DeleteDataOperation("fenton", Some(accnC)),
@@ -96,6 +106,7 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
         )
 
         // force a transaction boundary between Create*Offer and Update/DeleteOffer
+
         transact(
           UpdateOfferOperation(2, lumens(5), Asset("Chinchilla", accnA), Price(1, 5), Some(accnB)),
           DeleteOfferOperation(3, Asset("Beaver", accnA), NativeAsset, Price(1, 3), Some(accnA)),
@@ -103,7 +114,24 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
           CreateOfferOperation(IssuedAmount(80, Asset("Chinchilla", accnA)), NativeAsset, Price(80, 4), Some(accnA)),
           CreateOfferOperation(IssuedAmount(1, Asset("Chinchilla", accnA)), Asset("Chinchilla", masterAccountKey), Price(1, 1), Some(accnA)),
           PathPaymentOperation(IssuedAmount(1, Asset("Chinchilla", masterAccountKey)), accnB, IssuedAmount(1, Asset("Chinchilla", accnA)), Nil),
-          BumpSequenceOperation(masterAccount.sequenceNumber + 20)
+          BumpSequenceOperation(masterAccount.sequenceNumber + 20),
+
+          // Operations for payment path finding
+          // X offers 4 banana for 1 avocado
+          // Y offers 1 coffee for 3 bananas
+          // Y offers 1 coffee for 1 avocado
+          // desired path: B pays avocado, Z receives coffee
+          ChangeTrustOperation(IssuedAmount(1000, avocado), Some(accnX)),
+          ChangeTrustOperation(IssuedAmount(1000, banana), Some(accnX)),
+          ChangeTrustOperation(IssuedAmount(1000, coffee), Some(accnX)),
+          ChangeTrustOperation(IssuedAmount(1000, banana), Some(accnY)),
+          ChangeTrustOperation(IssuedAmount(1000, coffee), Some(accnY)),
+          ChangeTrustOperation(IssuedAmount(1000, coffee), Some(accnZ)),
+          PaymentOperation(accnX, IssuedAmount(50, banana), Some(accnB)),
+          PaymentOperation(accnY, IssuedAmount(50, coffee), Some(accnB)),
+          CreateOfferOperation(IssuedAmount(50, banana), avocado, Price(4, 1), Some(accnX)),
+          CreateOfferOperation(IssuedAmount(50, coffee), banana, Price(1, 3), Some(accnY)),
+          CreateOfferOperation(IssuedAmount(50, coffee), avocado, Price(1, 1), Some(accnY))
         )
 
         // example of creating and submitting a payment transaction
@@ -147,7 +175,7 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
         case AccountResponse(id, _, _, _, _, _, balances, _) =>
           id mustEqual accnA
           balances must containTheSameElementsAs(Seq(
-            Balance(lumens(1000.000495), buyingLiabilities = 1600),
+            Balance(lumens(999.99999), buyingLiabilities = 3),
             Balance(IssuedAmount(1, Asset.apply("Chinchilla", masterAccountKey)), limit = Some(100000000))
           ))
       }.awaitFor(30 seconds)
@@ -230,7 +258,7 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
   "effect endpoint" should {
     "parse all effects" >> {
       val effects = network.effects()
-      effects.map(_.size) must beEqualTo(230).awaitFor(10 seconds)
+      effects.map(_.size) must beEqualTo(239).awaitFor(10 seconds)
     }
 
     "filter effects by account" >> {
@@ -321,7 +349,7 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
 
   "operation endpoint" should {
     "list all operations" >> {
-      network.operations().map(_.size) must beEqualTo(126).awaitFor(10.seconds)
+      network.operations().map(_.size) must beEqualTo(129).awaitFor(10.seconds)
     }
 
     "list operations by account" >> {
@@ -333,15 +361,16 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
 
     "list operations by ledger" >> {
       (for {
-        ledgerId <- network.ledgers().map(_.filter(_.operationCount > 0).last.sequence)
-        operation <- network.operationsByLedger(ledgerId).map(_.last)
-      } yield operation) must beLike[Transacted[Operation]] {
-        case op =>
+        ledgerId <- network.ledgers().map(_.find(_.operationCount > 0).get.sequence)
+        operations <- network.operationsByLedger(ledgerId)
+      } yield operations) must beLike[Seq[Transacted[Operation]]] {
+        case ops =>
+          val op = ops.last
           op.operation must beLike[Operation] {
             case PaymentOperation(dest, amount, source) =>
-              dest must beEquivalentTo(accnA)
-              amount mustEqual NativeAmount(100)
-              source must beSome[PublicKeyOps](masterAccountKey.asPublicKey)
+              dest must beEquivalentTo(accnB)
+              amount must beEquivalentTo(IssuedAmount(555, Asset("Aardvark", accnA)))
+              source must beSome[PublicKeyOps](accnA.asPublicKey)
           }
       }.awaitFor(10.seconds)
 
@@ -359,6 +388,7 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
     }
 
     "list the details of a given operation" >> {
+      network.transactions().map(_.last).foreach(s => println(s"txn: $s"))
       network.operationsByTransaction("c5e29c7d19c8af4fa932e6bd3214397a6f20041bc0234dacaac66bf155c02ae9")
         .map(_.drop(2).head) must beLike[Transacted[Operation]] {
         case op =>
@@ -414,6 +444,25 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
     }
   }
 
+  "payment path endpoint" should {
+    "provide options for path payments" >> {
+
+/*
+      println(1)
+      Await.result(network.offersByAccount(masterAccountKey), 10.seconds).foreach(println)
+      println(2)
+      Await.result(network.offersByAccount(accnA), 10.seconds).foreach(println)
+      // a is selling 80 a:chinchilla -> xlm @ 80:4
+      println(3)
+      Await.result(network.offersByAccount(accnB), 10.seconds).foreach(println)
+      // b is selling 5 xlm -> a:chinchilla @ 1:5
+      println(5)
+      network.paymentPath(masterAccountKey, accnB, IssuedAmount(1, Asset("Chinchilla", accnA))).foreach(println)
+*/
+      pending
+    }
+  }
+
   "trades endpoint" should {
     "filter trades by orderbook" >> {
       network.tradesByOrderBook(
@@ -437,8 +486,8 @@ class LocalNetworkIntegrationSpec(implicit ee: ExecutionEnv) extends Specificati
       byAccount.map(_.head) must beLike[TransactionHistory] {
         case t =>
           t.account must beEquivalentTo(masterAccountKey)
-          t.feePaid mustEqual NativeAmount(1400)
-          t.operationCount mustEqual 14
+          t.feePaid mustEqual NativeAmount(1700)
+          t.operationCount mustEqual 17
           t.memo mustEqual NoMemo
       }.awaitFor(10.seconds)
     }

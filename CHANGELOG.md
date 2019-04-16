@@ -4,12 +4,18 @@ As this project is pre 1.0, breaking changes may happen for minor version bumps.
 
 ## Next version
 
+<<<<<<< Updated upstream
 _Nothing, yet._
 
 ## 0.6.3
 
 ### Added
 
+=======
+### Added
+
+- [#33](https://github.com/Synesso/scala-stellar-sdk/issues/33) Added access to path finding endpoint. 
+>>>>>>> Stashed changes
 - [#68](https://github.com/Synesso/scala-stellar-sdk/issues/68) Added `base_offer_id` and `counter_offer_id` fields to the 
     `Trade` object. These fields were introduced with Horizon v0.15.0
 - [#69](https://github.com/Synesso/scala-stellar-sdk/issues/69) Added support for optional `valid_before` and 

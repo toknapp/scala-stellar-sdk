@@ -345,6 +345,23 @@ trait Network extends LazyLogging {
       .map(_.map(_.asInstanceOf[Transacted[PayOperation]]))
 
   /**
+    * Fetch a sequence of feasible payment paths.
+    * @param fromAccount the source account
+    * @param toAccount   the destination account
+    * @param toAmount    the destination asset and amount
+    * @see [[https://www.stellar.org/developers/horizon/reference/endpoints/path-finding.html endpoint doc]]
+    */
+  def paymentPath(fromAccount: PublicKeyOps, toAccount: PublicKeyOps, toAmount: Amount)(implicit ex: ExecutionContext):
+                  Future[Seq[PaymentPath]] = {
+    val params = assetParams("destination", toAmount.asset) ++ Map(
+      "destination_account" -> toAccount.accountId,
+      "destination_amount" -> toAmount.units.toString,
+      "source_account" -> fromAccount.accountId
+    )
+    horizon.get[Seq[PaymentPath]]("/paths", params)
+  }
+
+  /**
     * Fetch a stream of trades
     * @param cursor optional record id to start results from (defaults to `0`)
     * @param order  optional order to sort results by (defaults to `Asc`)
